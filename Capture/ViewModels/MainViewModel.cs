@@ -68,12 +68,30 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void LoadFromFile()
     {
+        // 트레이 ContextMenu 가 닫히는 도중에 ShowDialog 를 호출하면 포커스 경쟁으로
+        // 파일 선택창이 떴다가 즉시 닫힌다. ContextLost(Background) 우선순위로 한 틱 미뤄
+        // 메뉴 닫힘이 완전히 끝난 뒤 다이얼로그를 띄운다.
+        System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+            new Action(ShowLoadFromFileDialog),
+            System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private void ShowLoadFromFileDialog()
+    {
+        // owner 미전달 + 트레이 메뉴 클릭 직후 H.NotifyIcon 의 SetForegroundWindow(이전 앱) 와
+        // 경합 → 다이얼로그가 다른 프로세스 뒤에 깔려 사용자는 깜빡임만 보고 끝.
+        // 해결: 숨겨진 MainWindow 를 owner 로 명시 (HWND 만 있으면 됨, 시각적 안 뜸) +
+        // 직전에 Activate 로 우리 프로세스에 foreground 권한 회복.
+        var owner = System.Windows.Application.Current?.MainWindow;
+        owner?.Activate();
+
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
             Filter = "Image files (*.jpg, *.jpeg, *.jpe, *.jfif, *.png)|*.jpg;*.jpeg;*.jpe;*.jfif;*.png",
             Title = "Load from image file"
         };
-        if (dlg.ShowDialog() == true)
+        bool? result = owner != null ? dlg.ShowDialog(owner) : dlg.ShowDialog();
+        if (result == true)
         {
             try
             {
@@ -94,7 +112,20 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void ExitApp()
     {
-        System.Windows.Application.Current?.Shutdown();
+        // ShutdownMode=OnExplicitShutdown 이라 모든 창을 명시 Close 한 뒤 Shutdown 호출.
+        // CapturedWindow / RequestCaptureWindow 가 떠 있으면 Shutdown 만으로는 정리 누락 가능.
+        var app = System.Windows.Application.Current;
+        if (app == null) return;
+
+        ReleaseRequestCaptureWindows();
+
+        // ToList() 로 스냅샷 — Close 가 컬렉션을 변경할 수 있음
+        foreach (var win in app.Windows.Cast<System.Windows.Window>().ToList())
+        {
+            try { win.Close(); } catch { /* 이미 닫혔을 수 있음 */ }
+        }
+
+        app.Shutdown();
     }
 
     // ── Tab 키 — 모드 전환 ──────────────────────────────────────────────────
@@ -169,6 +200,11 @@ public partial class MainViewModel : ObservableObject
 
     private void OnCaptureCompleted(RequestCaptureViewModel senderVm, Rectangle rectCropped, System.Drawing.Bitmap? bmpCropped)
     {
+        // 캡쳐 오버레이 창은 후속 처리(ShowDialog/Show 의 순간 메시지 펌프)에서
+        // 큐에 쌓인 mouse-down/up 이 또 캡쳐를 트리거하지 않도록 가장 먼저 닫는다.
+        // ReleaseRequestCaptureWindows 가 멱등이라 끝에서도 한 번 더 호출 가능 (안전).
+        ReleaseRequestCaptureWindows();
+
         if (_captureMode.CurrentMode == CaptureMode.ColorPick)
         {
             var color = senderVm.PickedColor;
@@ -183,12 +219,15 @@ public partial class MainViewModel : ObservableObject
 
             if (rectCropped.Width > 0 && rectCropped.Height > 0)
             {
-                // preserve: Bounds 1px 보정 (FormCaptured.Bounds = rectCropped 위치 - 1px)
+                // CapturedWindow 의 외곽 Border 두께만큼 윈도우를 확장·시프트해야
+                // 이미지 콘텐츠 픽셀이 캡쳐한 원본 화면 좌표에 정확히 겹친다.
+                // CapturedWindow.xaml 의 wrapping Border BorderThickness 와 반드시 일치.
+                const int BorderPad = 2;
                 var capturedBounds = new Rectangle(
-                    rectCropped.Left + senderVm.ScreenBounds.Left - 1,
-                    rectCropped.Top + senderVm.ScreenBounds.Top - 1,
-                    bitmap.Width + 2,
-                    bitmap.Height + 2);
+                    rectCropped.Left + senderVm.ScreenBounds.Left - BorderPad,
+                    rectCropped.Top + senderVm.ScreenBounds.Top - BorderPad,
+                    bitmap.Width + 2 * BorderPad,
+                    bitmap.Height + 2 * BorderPad);
 
                 _captureMode.LastCapturedRegion = capturedBounds;
 

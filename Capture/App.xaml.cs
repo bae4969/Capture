@@ -26,12 +26,28 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private IHotKeyService? _hotKey;
 
+    // 단일 인스턴스 가드 — 두 번째 프로세스는 즉시 종료.
+    // 두 인스턴스가 동시에 실행되면 PrintScreen 훅을 둘 다 잡아 캡쳐 세션이 중복 발사됨.
+    // 이름에 GUID 박아 다른 앱과 충돌 회피, Local\ prefix 로 세션 격리(서로 다른 RDP/사용자 세션 고려).
+    private const string SingleInstanceMutexName = "Local\\Capture.BitWiz.SingleInstance.7A8F3C2D-9E1B-4F6A-B5D8-1C3E2A0F8B49";
+    private static Mutex? _singleInstanceMutex;
+
     // 9차 추가 (ADR-301): View codebehind 에서 ISettingsService 등 서비스 접근
     public IServiceProvider Services
         => _services ?? throw new InvalidOperationException("DI not initialized.");
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 단일 인스턴스 가드: 새로 만들어진 mutex 가 아니면(=기존 인스턴스 존재) 즉시 종료.
+        _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out bool createdNew);
+        if (!createdNew)
+        {
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+            Shutdown();
+            return;
+        }
+
         base.OnStartup(e);
 
         // DI 컨테이너 구성 (ADR-101)
@@ -94,6 +110,14 @@ public partial class App : Application
         _hotKey?.Stop();
         _services?.GetService<ISettingsService>()?.Save();
         _services?.Dispose();
+
+        if (_singleInstanceMutex != null)
+        {
+            try { _singleInstanceMutex.ReleaseMutex(); } catch { /* 다른 스레드 소유 시 무시 */ }
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+        }
+
         base.OnExit(e);
     }
 

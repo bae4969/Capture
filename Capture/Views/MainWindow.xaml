@@ -23,7 +23,10 @@
                         DoubleClickCommand="{Binding CaptureCommand}">
 
             <tb:TaskbarIcon.ContextMenu>
-                <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                <!-- DataContext 는 코드비하인드(MainWindow.xaml.cs)에서 명시 할당 —
+                     H.NotifyIcon.Wpf 의 ContextMenu 는 별도 visual tree 라
+                     RelativeSource Self.PlacementTarget 바인딩이 깨지는 케이스가 있음. -->
+                <ContextMenu x:Name="TrayMenu">
                     <MenuItem Header="Capture" Command="{Binding CaptureCommand}"/>
                     <Separator/>
                     <MenuItem Header="Load from image file" Command="{Binding LoadFromFileCommand}"/>

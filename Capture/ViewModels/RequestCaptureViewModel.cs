@@ -173,8 +173,14 @@ public partial class RequestCaptureViewModel : ObservableObject, IDisposable
                 rect.Intersect(new Rectangle(0, 0, ScreenBitmap.Width, ScreenBitmap.Height));
                 var cropped = ScreenBitmap.Clone(rect, ScreenBitmap.PixelFormat);
                 CaptureCompleted?.Invoke(rect, cropped);
+                return;
             }
         }
+
+        // 위 분기에 모두 실패해도 (LastRegion 모드 + 클릭이 영역 밖, 또는 ScreenBitmap null)
+        // 반드시 CaptureCompleted 또는 CaptureCancel 을 발사해 윈도우를 닫는다.
+        // 안 그러면 RequestCaptureWindow 가 그대로 떠 있어 사용자가 두 번째 드래그를 할 수 있게 된다.
+        CaptureCancel?.Invoke();
     }
 
     public void OnMouseLeave()

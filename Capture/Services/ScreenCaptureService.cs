@@ -4,23 +4,12 @@
 // natural-fix: Graphics.FromImage without using → using 블록 적용
 
 using System.Drawing;
-using System.Windows.Forms;
 using Capture.Interop;
 
 namespace Capture.Services;
 
 public class ScreenCaptureService : IScreenCaptureService
 {
-    public System.Drawing.Bitmap CaptureMonitor(Screen screen)
-    {
-        var bounds = screen.Bounds;
-        var bmp = new System.Drawing.Bitmap(bounds.Width, bounds.Height);
-        // natural-fix: using 적용
-        using var g = Graphics.FromImage(bmp);
-        g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
-        return bmp;
-    }
-
     public System.Drawing.Bitmap CaptureRegion(Rectangle region)
     {
         var bmp = new System.Drawing.Bitmap(region.Width, region.Height);

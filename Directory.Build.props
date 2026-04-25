@@ -1,0 +1,14 @@
+<Project>
+  <!--
+    솔루션 레벨 빌드 출력 경로 통일 — src/build/{Debug|Release}/
+    obj 는 src/build/obj/{ProjectName}/ 로 분리.
+    TargetFramework / RuntimeIdentifier 는 경로에 더 이상 부착하지 않음 (단일 RID 정책).
+  -->
+  <PropertyGroup>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)build\</BaseOutputPath>
+    <OutputPath>$(BaseOutputPath)$(Configuration)\</OutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)build\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+</Project>

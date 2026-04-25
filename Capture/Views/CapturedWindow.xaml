@@ -97,10 +97,10 @@
     </Window.ContextMenu>
 
     <!-- 외곽 chrome 제거: 컴팩트 모드의 사각 1px DimGray 테두리가 라운드 카드 밖에 사각형으로 노출되던 문제 해결.
-         일반 모드의 1px 테두리는 Image 를 감싸는 내부 Border 로 옮겨 그대로 유지. -->
+         일반 모드의 외곽선은 레이아웃을 갖는 wrapping Border (정수 두께) — 좌표·창 측정 안정. -->
     <Grid>
         <!-- 일반 모드: 이미지 + InkCanvas 오버레이 + 우상단 팔레트 -->
-        <Border BorderBrush="DimGray" BorderThickness="3"
+        <Border BorderBrush="DimGray" BorderThickness="2"
                 Visibility="{Binding IsNormal, Converter={StaticResource BoolToVisibilityConverter}}">
             <Grid>
                 <!-- MouseMove/MouseLeave 추가 — 스포이드 모드 미리보기. MouseDown은 더블클릭 컴팩트 토글 + 스포이드 픽 -->
