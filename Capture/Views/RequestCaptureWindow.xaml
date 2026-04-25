@@ -1,0 +1,89 @@
+<!-- author: eng-fe-desktop -->
+<!-- phase: engineering -->
+<!-- preserve: 전체화면 오버레이, Topmost — migration-mapping.md §14-1 -->
+<!-- 5차 fix: AllowsTransparency=False (멀티 모니터 가시성), Background=Black, ResizeMode=NoResize -->
+<!-- 9차: SelectionCanvas 에 WindowRect(Red)·LastRegionRect(RoyalBlue Dash) 추가 (원본 OnPaint line 352-370) -->
+<Window x:Class="Capture.Views.RequestCaptureWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="False"
+        Background="Black"
+        ResizeMode="NoResize"
+        Topmost="True"
+        ShowInTaskbar="False"
+        Cursor="Cross"
+        KeyDown="Window_KeyDown"
+        MouseDown="Window_MouseDown"
+        MouseMove="Window_MouseMove"
+        MouseUp="Window_MouseUp"
+        MouseLeave="Window_MouseLeave">
+
+    <Grid>
+        <!-- 스크린샷 배경 이미지 — IsHitTestVisible=False 로 마우스 이벤트가 Window 핸들러로 직행 -->
+        <Image x:Name="BackgroundImage"
+               Stretch="Fill"
+               IsHitTestVisible="False"/>
+
+        <!-- 선택 영역 표시 Canvas — Crosshair/WindowRect/LastRegionRect/_selectionRect 가
+             Fill=Transparent 라 hit-test 잡아 캡처 마우스 이벤트 차단했음. IsHitTestVisible=False 로 회피. -->
+        <Canvas x:Name="SelectionCanvas" IsHitTestVisible="False">
+            <!-- 십자가 — 원본 FormRequestCapture.OnPaint line 346-351 -->
+            <Line x:Name="CrosshairV" Stroke="Magenta" StrokeThickness="1" Y1="0" Visibility="Collapsed"/>
+            <Line x:Name="CrosshairH" Stroke="Magenta" StrokeThickness="1" X1="0" Visibility="Collapsed"/>
+            <!-- Window 모드 빨간 사각형 — 원본 OnPaint line 352-361 -->
+            <Rectangle x:Name="WindowRect"
+                       Stroke="Red" StrokeThickness="2"
+                       Fill="Transparent"
+                       Visibility="Collapsed"/>
+            <!-- LastRegion 모드 파란 점선 사각형 — 원본 OnPaint line 362-370 -->
+            <Rectangle x:Name="LastRegionRect"
+                       Stroke="RoyalBlue" StrokeThickness="2"
+                       StrokeDashArray="4,2"
+                       Fill="Transparent"
+                       Visibility="Collapsed"/>
+        </Canvas>
+
+        <!-- 정보 패널 — 원본 FormRequestCapture.panInfo 회피 동작 (line 723-734):
+             기본 top-right, 커서 X > Width*2/3 일 때 bottom-left 로 이동.
+             pbMagnifier 350×350 에 맞춰 Image 240×240 로 키움. -->
+        <Border x:Name="InfoPanel"
+                Background="#CC000000"
+                VerticalAlignment="Top"
+                HorizontalAlignment="Right"
+                Padding="6,4"
+                Visibility="{Binding InfoVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+            <StackPanel>
+                <TextBlock Text="{Binding ModeText}"
+                           Foreground="White"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Margin="0,2"/>
+                <Grid Width="320" Height="320">
+                    <Image Source="{Binding MagnifierSource}"
+                           Stretch="Fill"/>
+                    <!-- 매그니파이어 십자가 — 원본 updateMagnifier line 868-871 의 4개 magenta 사각형 재현.
+                         center 에 12px 갭을 두고 상/하/좌/우 4개 라인으로 분할 -->
+                    <Rectangle Fill="#80FF00FF" Width="2"
+                               HorizontalAlignment="Center" VerticalAlignment="Top"
+                               Height="154"/>
+                    <Rectangle Fill="#80FF00FF" Width="2"
+                               HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                               Height="154"/>
+                    <Rectangle Fill="#80FF00FF" Height="2"
+                               HorizontalAlignment="Left" VerticalAlignment="Center"
+                               Width="154"/>
+                    <Rectangle Fill="#80FF00FF" Height="2"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"
+                               Width="154"/>
+                </Grid>
+                <TextBlock Text="{Binding IndicatorText}"
+                           Foreground="White"
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           MaxWidth="320"
+                           Margin="0,2"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

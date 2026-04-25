@@ -1,0 +1,44 @@
+<!-- author: eng-fe-desktop -->
+<!-- phase: engineering -->
+<!-- 9차 신규: 히스토그램 256 bin 텍스트 그리드 표시 창 -->
+<Window x:Class="Capture.Views.HistogramListWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Histogram List"
+        Width="240" Height="400"
+        MinWidth="200" MinHeight="200"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner"
+        Topmost="True"
+        Background="#F0F0F0"
+        KeyDown="OnKeyDown">
+
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- 헤더 라벨 -->
+        <TextBlock Grid.Row="0"
+                   FontFamily="Consolas"
+                   FontSize="11"
+                   FontWeight="Bold"
+                   Margin="0,0,0,4"
+                   x:Name="HeaderLabel"/>
+
+        <!-- 256 bin 텍스트 (Consolas 고정폭, 스크롤) -->
+        <Border Grid.Row="1"
+                BorderBrush="#CCCCCC" BorderThickness="1"
+                Background="White">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Auto">
+                <TextBlock x:Name="BinTextBlock"
+                           FontFamily="Consolas"
+                           FontSize="11"
+                           Padding="6,4"
+                           TextWrapping="NoWrap"/>
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</Window>

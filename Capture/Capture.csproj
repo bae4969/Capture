@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RootNamespace>Capture</RootNamespace>
+    <AssemblyName>Capture</AssemblyName>
+    <Product>Capture</Product>
+    <Company>BitWiz</Company>
+    <!-- ADR-203: WFAC010 해소. WinForms SDK 와 manifest 의 PerMonitorV2 일관 명시 -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- ADR-109: SmtpClient deprecated warning 허용 (1차 이식 한정) -->
+    <!-- CS0618 은 빌드 성공으로 간주. NoWarn 대신 #pragma 로 파일 단위 제어 -->
+    <!-- ADR-401: LibraryImport SourceGenerator 활성화 — C# 12 명시 (.NET 8 SDK 기본이지만 후속 SDK 변경 영향 차단) -->
+    <LangVersion>12</LangVersion>
+    <!-- ADR-401 정정 필요: LibraryImport SourceGenerator 는 unsafe 코드를 생성하므로 AllowUnsafeBlocks 가 필수.
+         ADR-401 §3 "AllowUnsafeBlocks 추가 금지" 는 컴파일러 동작과 충돌하는 검증 오류.
+         handoff-return-to-eng-lead-tech.md 에서 ADR 정정 요청 발행. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ADR-101: MVVM 프레임워크 -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+    <!-- ADR-102: NotifyIcon (H.NotifyIcon.Wpf 1순위) -->
+    <PackageReference Include="H.NotifyIcon.Wpf" Version="2.1.6" />
+    <!-- ADR-108: 설정 영속화 -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
+    <!-- DI 컨테이너 -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <!-- ADR-108: DPAPI -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\tray-aperture.ico" Condition="Exists('Resources\tray-aperture.ico')" />
+  </ItemGroup>
+
+</Project>
