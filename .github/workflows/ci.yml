@@ -1,31 +1,33 @@
 name: CI
 
 on:
-  push:
-    branches: [ master ]
-    tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
+
+# Release·tag push 권한 필요
+permissions:
+  contents: write
 
 jobs:
   build:
+    # PR 가 머지 없이 닫히면 skip
+    if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: windows-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # PR 머지 시점에는 master 의 머지 커밋을 직접 체크아웃해 그 commit 에 태그
+          ref: ${{ github.event.pull_request.merged == true && github.event.pull_request.merge_commit_sha || github.ref }}
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-
-      - name: Restore
-        run: dotnet restore Capture/Capture.csproj
-
-      - name: Build (Release)
-        run: dotnet build Capture/Capture.csproj -c Release --no-restore
 
       - name: Publish (Portable single EXE)
         run: dotnet publish Capture/Capture.csproj -p:PublishProfile=Portable
@@ -38,10 +40,36 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Create GitHub Release (on tag)
-        if: startsWith(github.ref, 'refs/tags/v')
+      # ── 아래는 PR 머지 시점에만 동작 ────────────────────────────────────────
+
+      - name: Compute next tag (date + merge sha7, KST)
+        id: tag
+        if: github.event.pull_request.merged == true
+        shell: bash
+        run: |
+          today=$(TZ=Asia/Seoul date +%Y.%m.%d)
+          sha="${{ github.event.pull_request.merge_commit_sha }}"
+          short_sha="${sha:0:7}"
+          new="v${today}-${short_sha}"
+          echo "new_tag=$new" >> "$GITHUB_OUTPUT"
+          echo "Next tag: $new"
+
+      - name: Create and push tag
+        if: github.event.pull_request.merged == true
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.tag.outputs.new_tag }}" "${{ github.event.pull_request.merge_commit_sha }}"
+          git push origin "${{ steps.tag.outputs.new_tag }}"
+
+      - name: Create GitHub Release with portable EXE
+        if: github.event.pull_request.merged == true
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.new_tag }}
+          name: ${{ steps.tag.outputs.new_tag }}
+          target_commitish: ${{ github.event.pull_request.merge_commit_sha }}
           files: build/Portable/Capture.exe
           generate_release_notes: true
         env:
