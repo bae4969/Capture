@@ -26,12 +26,6 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Restore
-        run: dotnet restore Capture/Capture.csproj
-
-      - name: Build (Release)
-        run: dotnet build Capture/Capture.csproj -c Release --no-restore
-
       - name: Publish (Portable single EXE)
         run: dotnet publish Capture/Capture.csproj -p:PublishProfile=Portable
 

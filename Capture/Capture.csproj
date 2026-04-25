@@ -22,18 +22,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
-  <!-- 포터블 단일 EXE publish 옵션 (Release 구성에서만 적용) -->
-  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-    <DebugType>embedded</DebugType>
-    <PublishReadyToRun>false</PublishReadyToRun>
-    <PublishTrimmed>false</PublishTrimmed>
-  </PropertyGroup>
+  <!-- 포터블 단일 EXE 옵션은 Properties/PublishProfiles/Portable.pubxml 에 일원화.
+       csproj 에 RID 를 박으면 RID 없는 dotnet restore 와 충돌해 일반 빌드 자체가 깨짐. -->
 
   <ItemGroup>
     <!-- ADR-101: MVVM 프레임워크 -->
