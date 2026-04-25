@@ -45,19 +45,22 @@ jobs:
 
       # ── 아래는 master 직접 push (PR 머지 포함) 한정 ──────────────────────────
 
-      - name: Compute next tag (auto patch bump)
+      - name: Compute next tag (date-based, KST)
         id: tag
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         shell: bash
         run: |
-          latest=$(git tag -l 'v*' --sort=-v:refname | head -n 1)
-          if [ -z "$latest" ]; then
-            new="v0.1.0"
+          today=$(TZ=Asia/Seoul date +%Y.%m.%d)
+          base="v${today}"
+          if ! git rev-parse -q --verify "refs/tags/${base}" >/dev/null; then
+            new="${base}"
           else
-            ver=${latest#v}
-            IFS='.' read -r major minor patch <<< "$ver"
-            patch=$((patch + 1))
-            new="v${major}.${minor}.${patch}"
+            # 같은 날짜에 이미 태그가 있으면 .2, .3 ... 접미사
+            n=2
+            while git rev-parse -q --verify "refs/tags/${base}.${n}" >/dev/null; do
+              n=$((n + 1))
+            done
+            new="${base}.${n}"
           fi
           echo "new_tag=$new" >> "$GITHUB_OUTPUT"
           echo "Next tag: $new"
