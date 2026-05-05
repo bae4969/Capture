@@ -18,7 +18,7 @@
              TaskbarIcon.DataContext 는 코드비하인드(Views/MainWindow.xaml.cs) 에서 MainViewModel 로 명시 할당,
              ContextMenu 는 PlacementTarget(=TrayIcon) 의 DataContext 를 끌어쓴다. -->
         <tb:TaskbarIcon x:Name="TrayIcon"
-                        ToolTipText="Capture It !"
+                        ToolTipText="Capture"
                         IconSource="/Resources/tray-aperture.ico"
                         DoubleClickCommand="{Binding CaptureCommand}">
 

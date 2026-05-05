@@ -32,7 +32,11 @@ public partial class RequestCaptureViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private string _modeText = string.Empty;
     [ObservableProperty] private string _indicatorText = string.Empty;
-    [ObservableProperty] private bool _infoVisible = true;
+    // 12차 hover-fix: InfoPanel 초기값 false. 호버 단계에서 마우스가 들어간 적 없는 형제
+    // 윈도우는 OnMouseMove 가 발화 안 되어 true 가 그대로 남아 모든 모니터에 매그니파이어
+    // 패널이 표시되던 버그. SyncCursorOnLoad 또는 Window_MouseMove 가 자기 모니터에서
+    // 활성화 시점에만 true 로 set.
+    [ObservableProperty] private bool _infoVisible = false;
     [ObservableProperty] private System.Drawing.Bitmap? _magnifierBitmap;
     [ObservableProperty] private System.Windows.Media.Imaging.BitmapSource? _magnifierSource;
     [ObservableProperty] private bool _isBlinking;
@@ -156,6 +160,29 @@ public partial class RequestCaptureViewModel : ObservableObject, IDisposable
             }
         }
         UpdateIndicator();
+    }
+
+    /// <summary>
+    /// 12차 hover-fix: Window.Loaded 시점에 호출. 절대 픽셀 커서 위치가 자기 ScreenBounds
+    /// 안에 있으면 _cursorPoint 동기화 + InfoVisible=true + 매그니파이어/인디케이터 즉시 갱신.
+    /// 영역 밖이면 InfoVisible=false 유지 (다른 모니터 윈도우만 패널 표시).
+    /// MouseMove 가 한 번도 발화하지 않은 정지 호버 상태에서도 단일 모니터 패널 보장.
+    /// </summary>
+    /// <returns>커서가 자기 모니터에 있어 활성화됐는지 여부</returns>
+    public bool SyncCursorOnLoad(Point cursorAbsolute)
+    {
+        if (!ScreenBounds.Contains(cursorAbsolute))
+        {
+            InfoVisible = false;
+            return false;
+        }
+        _cursorPoint = new Point(
+            cursorAbsolute.X - ScreenBounds.X,
+            cursorAbsolute.Y - ScreenBounds.Y);
+        InfoVisible = true;
+        UpdateMagnifier();
+        UpdateIndicator();
+        return true;
     }
 
     public void OnMouseMove(Point position, bool leftButtonDown)

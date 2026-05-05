@@ -6,6 +6,12 @@ on:
     types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
+# 동시 실행 차단: 같은 PR(또는 ref) 의 진행 중 워크플로우는 새 trigger 가 들어오면 cancel.
+# 단, closed/merged 시점의 release(태그+릴리즈) 단계는 cancel 되면 안 되므로 closed 액션은 예외.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event.action != 'closed' }}
+
 # Release·tag push 권한 필요
 permissions:
   contents: write

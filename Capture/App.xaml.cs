@@ -38,13 +38,21 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        // 단일 인스턴스 가드: 새로 만들어진 mutex 가 아니면(=기존 인스턴스 존재) 즉시 종료.
-        _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out bool createdNew);
-        if (!createdNew)
+        // 단일 인스턴스 가드 강화: initiallyOwned:false 로 생성 후 WaitOne(0) 으로 ownership 명시 시도.
+        // createdNew 만 의존하던 이전 패턴은 (1) 첫 인스턴스가 비정상 종료로 mutex 를 abandon 한 직후
+        // 두 번째 인스턴스가 실행되는 경계 케이스, (2) initiallyOwned:true 의 ownership 시도 결과가
+        // createdNew 와 분리되는 .NET 동작 모서리에서 가드를 우회시킬 수 있음.
+        // 또 base.OnStartup 미호출 상태에서의 Shutdown() 은 일부 환경에서 프로세스 잔존 위험 → Environment.Exit
+        // 으로 즉시 종료 보장.
+        _singleInstanceMutex = new Mutex(initiallyOwned: false, SingleInstanceMutexName, out bool createdNew);
+        bool acquired;
+        try { acquired = _singleInstanceMutex.WaitOne(TimeSpan.Zero, exitContext: false); }
+        catch (AbandonedMutexException) { acquired = true; /* 이전 인스턴스 비정상 종료 — 본 인스턴스가 인수 */ }
+        if (!acquired)
         {
             _singleInstanceMutex.Dispose();
             _singleInstanceMutex = null;
-            Shutdown();
+            Environment.Exit(0);
             return;
         }
 
