@@ -9,6 +9,10 @@
 // 4차 mixed-DPI fix: Screen.AllScreens → DpiHelper.EnumMonitors, SourceInitialized + SetWindowPosPhysical
 //   WPF Window.Left/Top/Width/Height 직접 할당 전부 제거 — SetWindowPosPhysical 로 통일 (ADR-106)
 // 8차: _emailService 필드·ctor 인자 제거, CreateCapturedViewModel 시그니처 변경 (ADR-006)
+// 10차 cross-monitor: BroadcastCrossMonitorMove/Up + OnCaptureCompleted 절대좌표 분기 +
+//   OnTabKeyPressed 에 ReleaseCapture — 모니터 경계 가로지르는 드래그 지원
+// 11차 cross-monitor v2: BroadcastCrossMonitorMove 시그니처 확장 (grabAbsolute propagate)
+//   — OnCrossMonitorBroadcast 호출로 변경, 형제 ViewModel selectionRect 미생성 버그 fix
 
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -135,10 +139,41 @@ public partial class MainViewModel : ObservableObject
         lock (_requestCaptureWindows)
         {
             if (_requestCaptureWindows.Count == 0) return;
+            // 10차 cross-monitor: 모드 전환 시 SetCapture 누수 방지 — 명시적 해제
+            User32.ReleaseCapture();
             _captureMode.ToggleMode();
             foreach (var win in _requestCaptureWindows)
                 win.ViewModel.CaptureMethodChanged();
         }
+    }
+
+    // ── 10차 cross-monitor: broadcast 허브 ───────────────────────────────────
+    /// <summary>
+    /// 드래그 시작 윈도우의 ViewModel 이 발화한 cross-monitor 마우스 이동 시그널을
+    /// 모든 형제 RequestCaptureWindow ViewModel 에 push 한다 (sender 자신 포함 — 일관 경로).
+    /// 11차: 시그니처에 grabAbsolute 추가 + OnCrossMonitorBroadcast 호출. 형제도
+    /// GrabPointAbsolute/IsDragging 이 동기화되어 selectionRect 가 자기 ScreenBounds
+    /// 클리핑으로 표시됨.
+    /// 재진입 안전성: SelectionUpdated 이벤트가 동기 호출이고 View 핸들러
+    /// (OnCrossMonitorSelectionUpdated → EnsureSelectionRect + UpdateSelectionRectAbsolute) 는
+    /// broadcast 를 다시 트리거하지 않으므로 lock 재진입 없음.
+    /// </summary>
+    private void BroadcastCrossMonitorMove(RequestCaptureViewModel sender, Point grabAbsolute, Point cursorAbsolute, bool leftButtonDown)
+    {
+        lock (_requestCaptureWindows)
+        {
+            foreach (var win in _requestCaptureWindows)
+                win.ViewModel.OnCrossMonitorBroadcast(grabAbsolute, cursorAbsolute, leftButtonDown);
+        }
+    }
+
+    /// <summary>
+    /// 드래그 시작 윈도우의 ViewModel 이 발화한 cross-monitor MouseUp 시그널을 처리.
+    /// sender 의 OnMouseUpAbsolute → CaptureCompleted 이벤트 → OnCaptureCompleted 진입.
+    /// </summary>
+    private void BroadcastCrossMonitorUp(RequestCaptureViewModel sender, Point absolutePixel)
+    {
+        sender.OnMouseUpAbsolute(absolutePixel);
     }
 
     // ── 캡처 요청 플로우 ─────────────────────────────────────────────────────
@@ -176,6 +211,10 @@ public partial class MainViewModel : ObservableObject
                 };
                 vm.CaptureCompleted += (rect, cropped) => OnCaptureCompleted(vm, rect, cropped);
                 vm.CaptureCancel += () => OnCaptureCancel();
+                // 10차 cross-monitor: View → ViewModel(자신) → MainViewModel(허브) → 모든 형제 ViewModel
+                // 11차: CrossMonitorMove 시그니처 확장 (grabAbsolute, cursorAbsolute, leftDown)
+                vm.CrossMonitorMove += (grab, cur, ld) => BroadcastCrossMonitorMove(vm, grab, cur, ld);
+                vm.CrossMonitorUp += abs => BroadcastCrossMonitorUp(vm, abs);
 
                 // 4차 mixed-DPI fix: WPF Window.Left/Top/Width/Height 직접 할당 제거
                 // SourceInitialized 직후 SetWindowPosPhysical 로 물리 픽셀 좌표 강제 설정
@@ -205,6 +244,17 @@ public partial class MainViewModel : ObservableObject
         // ReleaseRequestCaptureWindows 가 멱등이라 끝에서도 한 번 더 호출 가능 (안전).
         ReleaseRequestCaptureWindows();
 
+        // 10차 cross-monitor: bmpCropped 가 null 이고 rectCropped 가 유효하면
+        // rectCropped 는 이미 virtual screen 절대좌표. ScreenCaptureService 로 합성 캡쳐.
+        // (드래그가 모니터 경계를 가로지르는 경로 — RequestCaptureViewModel.OnMouseUpAbsolute 발사)
+        bool isAbsolute = bmpCropped == null
+            && rectCropped.Width > 0 && rectCropped.Height > 0
+            && _captureMode.CurrentMode == CaptureMode.Region;
+        if (isAbsolute)
+        {
+            bmpCropped = _screenCapture.CaptureRegion(rectCropped);
+        }
+
         if (_captureMode.CurrentMode == CaptureMode.ColorPick)
         {
             var color = senderVm.PickedColor;
@@ -223,11 +273,18 @@ public partial class MainViewModel : ObservableObject
                 // 이미지 콘텐츠 픽셀이 캡쳐한 원본 화면 좌표에 정확히 겹친다.
                 // CapturedWindow.xaml 의 wrapping Border BorderThickness 와 반드시 일치.
                 const int BorderPad = 2;
-                var capturedBounds = new Rectangle(
-                    rectCropped.Left + senderVm.ScreenBounds.Left - BorderPad,
-                    rectCropped.Top + senderVm.ScreenBounds.Top - BorderPad,
-                    bitmap.Width + 2 * BorderPad,
-                    bitmap.Height + 2 * BorderPad);
+                // 10차 cross-monitor: isAbsolute 면 rectCropped 가 이미 절대좌표 → ScreenBounds 더하지 않음
+                var capturedBounds = isAbsolute
+                    ? new Rectangle(
+                        rectCropped.Left - BorderPad,
+                        rectCropped.Top - BorderPad,
+                        bitmap.Width + 2 * BorderPad,
+                        bitmap.Height + 2 * BorderPad)
+                    : new Rectangle(
+                        rectCropped.Left + senderVm.ScreenBounds.Left - BorderPad,
+                        rectCropped.Top + senderVm.ScreenBounds.Top - BorderPad,
+                        bitmap.Width + 2 * BorderPad,
+                        bitmap.Height + 2 * BorderPad);
 
                 _captureMode.LastCapturedRegion = capturedBounds;
 

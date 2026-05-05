@@ -131,6 +131,13 @@ internal static partial class User32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool ReleaseCapture();
 
+    // ── 멀티 모니터 드래그 (RequestCaptureWindow 모니터 경계 가로지르는 드래그) ─
+
+    // 마우스 이벤트를 hWnd 로 강제 라우팅. 마우스가 다른 모니터/HWND 로 가도
+    // hWnd 가 계속 MouseMove/MouseUp 을 받게 하여 cross-monitor 드래그 지속.
+    [LibraryImport("user32.dll")]
+    public static partial IntPtr SetCapture(IntPtr hWnd);
+
     // ── Layered Window 알파 직접 제어 (6차 fix — SetLayeredWindowAttributes) ─
 
     // ── #19 변환 (SetLastError 보존) ──

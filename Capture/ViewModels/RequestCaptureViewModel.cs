@@ -4,6 +4,10 @@
 // natural-fix: ~FormRequestCapture() 종료자 제거 → Window.Closed 명시 Dispose
 // 4차 mixed-DPI fix: MonitorScale 프로퍼티 추가 — ToDrawingPoint 가 ViewModel.MonitorScale 사용
 // 9차: CurrentMode·LastCapturedRegion·LastWindowRect 프로퍼티 노출. ModeChanged 이벤트 추가.
+// 10차 cross-monitor: GrabPointAbsolute/CursorPointAbsolute/IsDragging + CrossMonitorMove/Up/SelectionUpdated 이벤트
+//   — 모니터 경계 가로지르는 드래그 지원 (OnMouseLeave 가드 포함)
+// 11차 cross-monitor v2: OnMouseMoveAbsolute → OnCrossMonitorBroadcast (grabAbsolute 도 propagate)
+//   — 형제 ViewModel 의 IsDragging guard 로 selectionRect 미생성되던 버그 fix
 
 using System.Drawing;
 using Capture.Imaging;
@@ -45,6 +49,39 @@ public partial class RequestCaptureViewModel : ObservableObject, IDisposable
     public Color PickedColor { get; private set; }
     public Rectangle ScreenBounds { get; set; }
 
+    // ── 10차 cross-monitor: 모니터 경계 가로지르는 드래그용 절대좌표 상태 ─────
+    // virtual screen 절대 픽셀 기준. ScreenBounds 와 무관하게 모든 형제 윈도우가 공유.
+    // MouseDown 시 1회 설정 후 변경되지 않는 기준점.
+    public Point GrabPointAbsolute { get; private set; }
+    // MouseMove 시 갱신되는 현재 커서 절대 픽셀.
+    public Point CursorPointAbsolute { get; private set; }
+    // 드래그 진행 플래그. Region 모드에서만 true. MouseLeave 가드 + broadcast 게이트.
+    public bool IsDragging { get; private set; }
+
+    /// <summary>현재 선택 영역 (virtual screen 절대 픽셀, 정규화)</summary>
+    public Rectangle CurrentSelectionAbsolute
+    {
+        get
+        {
+            int x = Math.Min(GrabPointAbsolute.X, CursorPointAbsolute.X);
+            int y = Math.Min(GrabPointAbsolute.Y, CursorPointAbsolute.Y);
+            int w = Math.Abs(GrabPointAbsolute.X - CursorPointAbsolute.X);
+            int h = Math.Abs(GrabPointAbsolute.Y - CursorPointAbsolute.Y);
+            return new Rectangle(x, y, w, h);
+        }
+    }
+
+    /// <summary>현재 선택 영역이 본 ViewModel 의 ScreenBounds 를 벗어나는가</summary>
+    public bool IsCrossMonitorDrag
+    {
+        get
+        {
+            var sel = CurrentSelectionAbsolute;
+            if (sel.Width == 0 || sel.Height == 0) return false;
+            return !ScreenBounds.Contains(sel);
+        }
+    }
+
     /// <summary>
     /// 이 ViewModel 이 담당하는 모니터의 DPI 스케일 (ScaleX, ScaleY).
     /// MainViewModel.RequestCaptureAsync 에서 EnumMonitors() 결과로 설정된다.
@@ -71,6 +108,16 @@ public partial class RequestCaptureViewModel : ObservableObject, IDisposable
     public event Action<Rectangle, System.Drawing.Bitmap?>? CaptureCompleted;
     public event Action? CaptureCancel;
 
+    // ── 10차 cross-monitor broadcast 시그널 (11차: 시그니처 확장) ────────────
+    /// <summary>View 가 cross-monitor 드래그 진행 중 형제 윈도우 동기화를 요청한다.
+    /// 11차: 형제 ViewModel 도 selectionRect 를 그릴 수 있도록 grabAbsolute 도 함께 전달.
+    /// 인자: (grabAbsolute, cursorAbsolute, leftButtonDown)</summary>
+    public event Action<Point, Point, bool>? CrossMonitorMove;
+    /// <summary>View 가 cross-monitor 드래그 종료를 알린다. 인자: 절대좌표 픽셀</summary>
+    public event Action<Point>? CrossMonitorUp;
+    /// <summary>OnMouseMoveAbsolute 수신 후 View 가 selectionRect 다시 그리도록 알림</summary>
+    public event Action? SelectionUpdated;
+
     public RequestCaptureViewModel(
         ICaptureModeService captureMode,
         IWindowEnumService windowEnum)
@@ -80,11 +127,24 @@ public partial class RequestCaptureViewModel : ObservableObject, IDisposable
         UpdateModeText();
     }
 
-    public void OnMouseDown(Point position)
+    public void OnMouseDown(Point position, Point absolutePosition)
     {
         _isGrab = true;
         _grabPoint = position;
         _cursorPoint = position;
+
+        // 10차 cross-monitor: Region 모드만 IsDragging 활성화.
+        // 다른 모드(Window/LastRegion/ColorPick)는 cross-monitor 경로 진입 차단.
+        if (_captureMode.CurrentMode == AppCaptureMode.Region)
+        {
+            GrabPointAbsolute = absolutePosition;
+            CursorPointAbsolute = absolutePosition;
+            IsDragging = true;
+        }
+        else
+        {
+            IsDragging = false;
+        }
 
         if (_captureMode.CurrentMode == AppCaptureMode.LastRegion)
         {
@@ -126,10 +186,89 @@ public partial class RequestCaptureViewModel : ObservableObject, IDisposable
         UpdateIndicator();
     }
 
+    /// <summary>
+    /// 11차 cross-monitor v2: MainViewModel 의 broadcast 진입점. 모든 형제 ViewModel 이
+    /// 호출되며, 형제는 MouseDown 을 받지 않아 GrabPointAbsolute/IsDragging 이 default 상태.
+    /// 본 메서드가 grabAbsolute 까지 받아 동기화하므로 형제 윈도우의 selectionRect 도
+    /// 자기 ScreenBounds 클리핑으로 정상 표시된다.
+    /// (10차의 OnMouseMoveAbsolute 는 IsDragging guard 로 형제를 즉시 return 시켜
+    ///  형제 selectionRect 가 절대 그려지지 않는 버그가 있었음.)
+    /// 11차 v3: 커서가 위치한 모니터의 InfoPanel(매그니파이어/인디케이터) 도 활성화되도록
+    /// InfoVisible=true + UpdateMagnifier 호출. 자기 ScreenBounds 안에 커서가 있을 때만
+    /// 매그니파이어를 갱신하고, 영역 밖이면 InfoPanel 숨김 (다른 모니터 InfoPanel 만 표시).
+    /// </summary>
+    public void OnCrossMonitorBroadcast(Point grabAbsolute, Point cursorAbsolute, bool leftButtonDown)
+    {
+        if (!leftButtonDown) return;
+
+        GrabPointAbsolute = grabAbsolute;
+        CursorPointAbsolute = cursorAbsolute;
+        IsDragging = true;
+
+        // 자기 모니터 영역 안에서의 로컬 픽셀로도 동기화 — UpdateIndicator 의
+        // _cursorPoint 의존성과 ScreenBitmap.GetPixel 색상 표시를 위해.
+        _cursorPoint = new Point(
+            cursorAbsolute.X - ScreenBounds.X,
+            cursorAbsolute.Y - ScreenBounds.Y);
+
+        // 커서가 자기 모니터 위에 있을 때만 InfoPanel(매그니파이어 포함) 활성화 + 갱신.
+        // 다른 모니터의 윈도우는 InfoVisible=false 로 숨겨 한 화면에만 패널이 표시되도록.
+        bool cursorOnThisMonitor = ScreenBounds.Contains(cursorAbsolute);
+        if (cursorOnThisMonitor)
+        {
+            InfoVisible = true;
+            UpdateMagnifier();
+        }
+        else
+        {
+            InfoVisible = false;
+        }
+
+        SelectionUpdated?.Invoke();
+        UpdateIndicator();
+    }
+
+    /// <summary>
+    /// 10차 cross-monitor: View 가 cross-monitor 드래그 종료 시 호출. 절대좌표
+    /// 사각형을 CaptureCompleted 로 발사 (bitmap=null 로 MainViewModel 이
+    /// ScreenCaptureService.CaptureRegion 으로 합성 캡쳐 책임).
+    /// </summary>
+    public void OnMouseUpAbsolute(Point absolutePosition)
+    {
+        if (!IsDragging) return;
+        CursorPointAbsolute = absolutePosition;
+        var sel = CurrentSelectionAbsolute;
+        IsDragging = false;
+        _isGrab = false;
+
+        if (sel.Width * sel.Height < MINIMUM_CAPTURE_SIZE)
+        {
+            CaptureCancel?.Invoke();
+            return;
+        }
+
+        // bitmap=null → MainViewModel 이 sel(절대좌표) 로 합성 캡쳐 처리
+        CaptureCompleted?.Invoke(sel, null);
+    }
+
+    /// <summary>10차 cross-monitor: View → MainViewModel broadcast 트리거.
+    /// 11차: GrabPointAbsolute 도 함께 propagate 해 형제 ViewModel 이 selectionRect 를 그리도록.</summary>
+    public void RaiseCrossMonitorMove(Point absolutePosition, bool leftButtonDown)
+    {
+        CrossMonitorMove?.Invoke(GrabPointAbsolute, absolutePosition, leftButtonDown);
+    }
+
+    /// <summary>10차 cross-monitor: View → MainViewModel broadcast 트리거</summary>
+    public void RaiseCrossMonitorUp(Point absolutePosition)
+    {
+        CrossMonitorUp?.Invoke(absolutePosition);
+    }
+
     public void OnMouseUp(Point position)
     {
         _cursorPoint = position;
         _isGrab = false;
+        IsDragging = false;  // 10차: 단일 모니터 경로 종료 시 cross-monitor 상태 클리어
 
         int x = Math.Min(_grabPoint.X, _cursorPoint.X);
         int y = Math.Min(_grabPoint.Y, _cursorPoint.Y);
@@ -185,6 +324,9 @@ public partial class RequestCaptureViewModel : ObservableObject, IDisposable
 
     public void OnMouseLeave()
     {
+        // 10차 cross-monitor: 드래그 중에는 모니터 경계를 벗어나도 상태 유지.
+        // SetCapture 가 잡혀있어 다른 모니터로 가도 MouseMove 가 계속 들어옴.
+        if (IsDragging) return;
         _isGrab = false;
         InfoVisible = false;
     }
@@ -194,6 +336,7 @@ public partial class RequestCaptureViewModel : ObservableObject, IDisposable
         switch (key)
         {
             case WpfKey.Escape:
+                IsDragging = false;  // 10차: ESC 시 cross-monitor 상태 클리어
                 CaptureCancel?.Invoke();
                 break;
             case WpfKey.Up:
@@ -218,6 +361,7 @@ public partial class RequestCaptureViewModel : ObservableObject, IDisposable
     public void CaptureMethodChanged()
     {
         _isGrab = false;
+        IsDragging = false;  // 10차: 모드 전환 시 cross-monitor 드래그 취소
         UpdateModeText();
         // 9차: 모드 전환 시 View 에 알림 (Window/LastRegion rect 오버레이 갱신)
         ModeChanged?.Invoke();
