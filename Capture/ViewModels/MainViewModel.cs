@@ -272,19 +272,24 @@ public partial class MainViewModel : ObservableObject
                 // CapturedWindow 의 외곽 Border 두께만큼 윈도우를 확장·시프트해야
                 // 이미지 콘텐츠 픽셀이 캡쳐한 원본 화면 좌표에 정확히 겹친다.
                 // CapturedWindow.xaml 의 wrapping Border BorderThickness 와 반드시 일치.
-                const int BorderPad = 2;
-                // 10차 cross-monitor: isAbsolute 면 rectCropped 가 이미 절대좌표 → ScreenBounds 더하지 않음
-                var capturedBounds = isAbsolute
-                    ? new Rectangle(
-                        rectCropped.Left - BorderPad,
-                        rectCropped.Top - BorderPad,
-                        bitmap.Width + 2 * BorderPad,
-                        bitmap.Height + 2 * BorderPad)
-                    : new Rectangle(
-                        rectCropped.Left + senderVm.ScreenBounds.Left - BorderPad,
-                        rectCropped.Top + senderVm.ScreenBounds.Top - BorderPad,
-                        bitmap.Width + 2 * BorderPad,
-                        bitmap.Height + 2 * BorderPad);
+                // 12차 dpi-fix: BorderPad 는 WPF DIP 단위 (BorderThickness=2). SetWindowPos
+                // 는 물리 픽셀이라 그대로 빼면 mixed-DPI 환경(cross-monitor)에서 1픽셀 밀림.
+                // 캡쳐 절대좌표 위치의 모니터 DPI 로 환산해 X/Y 별도 보정.
+                const double BorderDip = 2.0;
+                int absLeft = isAbsolute
+                    ? rectCropped.Left
+                    : rectCropped.Left + senderVm.ScreenBounds.Left;
+                int absTop = isAbsolute
+                    ? rectCropped.Top
+                    : rectCropped.Top + senderVm.ScreenBounds.Top;
+                var (padScaleX, padScaleY) = DpiHelper.GetScaleForPoint(absLeft, absTop);
+                int padX = (int)Math.Round(BorderDip * padScaleX);
+                int padY = (int)Math.Round(BorderDip * padScaleY);
+                var capturedBounds = new Rectangle(
+                    absLeft - padX,
+                    absTop - padY,
+                    bitmap.Width + 2 * padX,
+                    bitmap.Height + 2 * padY);
 
                 _captureMode.LastCapturedRegion = capturedBounds;
 

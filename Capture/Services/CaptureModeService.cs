@@ -14,7 +14,7 @@ public class CaptureModeService : ICaptureModeService
 
     public void ToggleMode()
     {
-        // preserve: 원본 CaptureIt.ToggleMethod() 순서와 동일
+        // preserve: 원본 Capture.ToggleMethod() 순서와 동일
         // None→Region, Region→LastRegion(LastRegion 존재 시) 또는 Window, LastRegion→Window,
         // Window→ColorPick, ColorPick→Region
         switch (CurrentMode)

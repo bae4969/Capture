@@ -65,6 +65,29 @@ public partial class RequestCaptureWindow : Window
         ViewModel.OnKeyDown(e.Key);
     }
 
+    /// <summary>
+    /// 12차 hover-fix: 윈도우 표시 직후, 마우스가 정지 호버 상태일 때도 단일 모니터에만
+    /// InfoPanel(매그니파이어/crosshair) 이 표시되도록 초기 동기화.
+    /// _infoVisible 초기값을 false 로 내렸기 때문에 MouseMove 가 발화하지 않으면 어떤
+    /// 윈도우도 패널을 표시하지 않음. 여기서 GetCursorPos 로 자기 모니터 위에 있는지
+    /// 직접 확인 후 활성화한다. SourceInitialized(SetWindowPosPhysical) 이후 발화하므로
+    /// ScreenBounds/MonitorScale 은 이미 설정 완료 상태.
+    /// </summary>
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        User32.GetCursorPos(out var absPt);
+        if (!ViewModel.SyncCursorOnLoad(absPt)) return;
+
+        // 자기 모니터 위 — crosshair / InfoPanel 회피 위치도 즉시 갱신.
+        var bounds = ViewModel.ScreenBounds;
+        var (sx, sy) = ViewModel.MonitorScale;
+        var dipPos = new System.Windows.Point(
+            (absPt.X - bounds.X) / sx,
+            (absPt.Y - bounds.Y) / sy);
+        UpdateCrosshair(dipPos);
+        UpdateInfoPanelPosition(dipPos);
+    }
+
     private void Window_MouseDown(object sender, WpfMouseButtonEventArgs e)
     {
         if (e.LeftButton == WpfMouseButtonState.Pressed)

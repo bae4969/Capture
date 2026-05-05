@@ -13,6 +13,7 @@
         Topmost="True"
         ShowInTaskbar="False"
         Cursor="Cross"
+        Loaded="Window_Loaded"
         KeyDown="Window_KeyDown"
         MouseDown="Window_MouseDown"
         MouseMove="Window_MouseMove"
