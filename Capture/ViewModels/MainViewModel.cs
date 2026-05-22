@@ -318,6 +318,9 @@ public partial class MainViewModel : ObservableObject
                     DpiHelper.SetWindowPosPhysical(hwnd, capturedLeft, capturedTop, 0, 0);
                 };
                 win.Show();
+                // 캡처 직후 키보드 포커스 부여 (ESC 닫기 / Ctrl 드로잉 즉시 사용 가능).
+                // XAML ShowActivated=False 는 기존 캡처 창 보호용 — 그 의도와 양립.
+                win.Activate();
             }
         }
 

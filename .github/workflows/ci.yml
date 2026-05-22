@@ -35,18 +35,45 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # PR open/synchronize/reopened 시에만 publish + artifact 업로드.
+      # closed/merged 시점에는 PR head sha 의 마지막 빌드 artifact 를 재사용해 동일 SHA 를 두 번
+      # 빌드하지 않는다.
       - name: Publish (Portable single EXE)
+        if: github.event.action != 'closed'
         run: dotnet publish Capture/Capture.csproj -p:PublishProfile=Portable
 
       - name: Upload portable EXE artifact
+        if: github.event.action != 'closed'
         uses: actions/upload-artifact@v4
         with:
-          name: Capture-Portable-${{ github.sha }}
+          # PR head sha 로 식별 — closed 시점에 같은 이름으로 재발견 가능
+          name: Capture-Portable-${{ github.event.pull_request.head.sha }}
           path: build/Portable/Capture.exe
           if-no-files-found: error
           retention-days: 30
 
       # ── 아래는 PR 머지 시점에만 동작 ────────────────────────────────────────
+
+      # 머지 시점: 새로 빌드하지 않고 PR 의 마지막 synchronize/opened run 의 artifact 를 다운로드.
+      # 같은 head_sha 의 가장 최신 ci.yml run 을 gh CLI 로 찾아 download.
+      - name: Download portable EXE from PR build
+        if: github.event.pull_request.merged == true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          head_sha="${{ github.event.pull_request.head.sha }}"
+          artifact_name="Capture-Portable-$head_sha"
+          run_id=$(gh run list --workflow ci.yml --json databaseId,headSha,conclusion --limit 100 \
+            --jq "[.[] | select(.headSha==\"$head_sha\" and .conclusion==\"success\")][0].databaseId")
+          if [ -z "$run_id" ]; then
+            echo "no successful prior run for head_sha=$head_sha — fallback to fresh publish"
+            dotnet publish Capture/Capture.csproj -p:PublishProfile=Portable
+          else
+            echo "downloading $artifact_name from run_id=$run_id"
+            mkdir -p build/Portable
+            gh run download "$run_id" -n "$artifact_name" -D build/Portable
+          fi
 
       - name: Compute next tag (date + merge sha7, KST)
         id: tag
