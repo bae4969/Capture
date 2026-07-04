@@ -35,10 +35,24 @@ public partial class MainViewModel : ObservableObject
     private readonly IWindowEnumService _windowEnum;
     private readonly IClipboardService _clipboard;
     private readonly IFileSaveService _fileSave;
+    private readonly IScreenRecordService _screenRecord;
     private readonly ISettingsService _settings;
     private readonly ITrayHost _trayHost;
 
     private readonly List<RequestCaptureWindow> _requestCaptureWindows = new();
+
+    // 영역 오버레이를 캡쳐와 공유하므로, 완료 콜백에서 "캡쳐"와 "녹화 시작"을 구분하는 플래그.
+    private bool _recordingRequested;
+
+    // 트레이 메뉴 토글 헤더 — IsRecording 상태에 따라 시작/정지 텍스트 전환.
+    [ObservableProperty]
+    private bool _isRecording;
+
+    [ObservableProperty]
+    private string _recordMenuHeader = "Start recording";
+
+    partial void OnIsRecordingChanged(bool value)
+        => RecordMenuHeader = value ? "Stop recording" : "Start recording";
 
     public MainViewModel(
         ICaptureModeService captureMode,
@@ -46,6 +60,7 @@ public partial class MainViewModel : ObservableObject
         IWindowEnumService windowEnum,
         IClipboardService clipboard,
         IFileSaveService fileSave,
+        IScreenRecordService screenRecord,
         ISettingsService settings,
         ITrayHost trayHost)
     {
@@ -54,8 +69,14 @@ public partial class MainViewModel : ObservableObject
         _windowEnum = windowEnum;
         _clipboard = clipboard;
         _fileSave = fileSave;
+        _screenRecord = screenRecord;
         _settings = settings;
         _trayHost = trayHost;
+
+        // ScreenRecorderLib 의 완료/실패 이벤트는 인코더 백그라운드 스레드에서 올 수 있어
+        // IsRecording set(트레이 헤더 바인딩) 을 UI 스레드로 마샬링한다.
+        _screenRecord.RecordingCompleted += OnRecordingCompleted;
+        _screenRecord.RecordingFailed += OnRecordingFailed;
 
         // 초기화: 첫 토글 (None → Region)
         _captureMode.ToggleMode();
@@ -67,6 +88,43 @@ public partial class MainViewModel : ObservableObject
     private async Task CaptureAsync()
     {
         await RequestCaptureAsync();
+    }
+
+    // ── 트레이 녹화 토글 ──────────────────────────────────────────────────────
+
+    [RelayCommand]
+    private async Task ToggleRecordingAsync()
+    {
+        if (_screenRecord.IsRecording)
+        {
+            // 정지 신호만. IsRecording 리셋은 완료 이벤트(OnRecordingCompleted)에서.
+            _screenRecord.Stop();
+            return;
+        }
+
+        // 녹화는 Region 오버레이를 재사용하므로 모드를 Region 으로 보장(복원 안 함 — 사용자 결정).
+        // SetMode 는 CurrentMode 만 바꿔 Tab 순환/LastRegion 상태를 건드리지 않아 가장 외과적.
+        _captureMode.SetMode(CaptureMode.Region);
+        _recordingRequested = true;
+        await RequestCaptureAsync();
+    }
+
+    private void OnRecordingCompleted(string path)
+    {
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+        {
+            IsRecording = false;
+            _trayHost.ShowBalloonTip("Recording saved", path);
+        });
+    }
+
+    private void OnRecordingFailed(string message)
+    {
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+        {
+            IsRecording = false;
+            WpfMessageBox.Show($"Recording failed: {message}", "Error");
+        });
     }
 
     [RelayCommand]
@@ -244,6 +302,32 @@ public partial class MainViewModel : ObservableObject
         // ReleaseRequestCaptureWindows 가 멱등이라 끝에서도 한 번 더 호출 가능 (안전).
         ReleaseRequestCaptureWindows();
 
+        // 녹화 분기 — 오버레이가 녹화 요청으로 떠 있었으면 캡쳐 대신 녹화를 시작한다.
+        // 오버레이가 이미 닫혔으므로(위 Release) 이 시점에 SaveFileDialog 를 띄워도 충돌 없음.
+        if (_recordingRequested)
+        {
+            _recordingRequested = false;
+
+            // rect 를 virtual-screen 절대 물리 픽셀로 확정 — 캡쳐와 동일 계약.
+            // cross-monitor 경로(bmpCropped==null)면 rectCropped 가 이미 절대좌표,
+            // 단일 모니터 로컬좌표 경로면 sender 의 ScreenBounds 오프셋을 더한다.
+            if (rectCropped.Width <= 0 || rectCropped.Height <= 0) return;
+            var absRect = bmpCropped == null
+                ? rectCropped
+                : new Rectangle(
+                    rectCropped.Left + senderVm.ScreenBounds.Left,
+                    rectCropped.Top + senderVm.ScreenBounds.Top,
+                    rectCropped.Width,
+                    rectCropped.Height);
+
+            string? outputPath = ShowRecordSaveDialog();
+            if (outputPath == null) return; // 저장 취소 → 녹화 안 함
+
+            _screenRecord.Start(absRect, outputPath);
+            IsRecording = true;
+            return;
+        }
+
         // 10차 cross-monitor: bmpCropped 가 null 이고 rectCropped 가 유효하면
         // rectCropped 는 이미 virtual screen 절대좌표. ScreenCaptureService 로 합성 캡쳐.
         // (드래그가 모니터 경계를 가로지르는 경로 — RequestCaptureViewModel.OnMouseUpAbsolute 발사)
@@ -329,7 +413,28 @@ public partial class MainViewModel : ObservableObject
 
     private void OnCaptureCancel()
     {
+        // 영역 선택을 ESC 로 취소하면 녹화 플래그도 꺼야 다음 캡쳐가 녹화로 오인되지 않는다.
+        _recordingRequested = false;
         ReleaseRequestCaptureWindows();
+    }
+
+    private string? ShowRecordSaveDialog()
+    {
+        // owner/Activate 처리는 ShowLoadFromFileDialog 와 동일 이유 — 트레이 메뉴 직후
+        // foreground 경합으로 다이얼로그가 뒤에 깔리는 것을 막는다.
+        var owner = System.Windows.Application.Current?.MainWindow;
+        owner?.Activate();
+
+        string initialDir = _settings.AutoSavePath;
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "MP4 video (*.mp4)|*.mp4",
+            Title = "Save recording",
+            FileName = DateTime.Now.ToString("yyyyMMddHHmmss") + ".mp4",
+            InitialDirectory = System.IO.Directory.Exists(initialDir) ? initialDir : null,
+        };
+        bool? result = owner != null ? dlg.ShowDialog(owner) : dlg.ShowDialog();
+        return result == true ? dlg.FileName : null;
     }
 
     private void ReleaseRequestCaptureWindows()

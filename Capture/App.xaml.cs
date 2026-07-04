@@ -67,6 +67,7 @@ public partial class App : Application
         collection.AddSingleton<IWindowEnumService, WindowEnumService>();
         collection.AddSingleton<IClipboardService, ClipboardService>();
         collection.AddSingleton<IFileSaveService, FileSaveService>();
+        collection.AddSingleton<IScreenRecordService, ScreenRecordService>();
         collection.AddSingleton<ISettingsService, SettingsService>();
         // IEmailService 제거 — 사용자 결정 2026-04-25 (ADR-006)
         collection.AddSingleton<LegacySettingsImporter>();
@@ -91,10 +92,11 @@ public partial class App : Application
         var windowEnum   = _services.GetRequiredService<IWindowEnumService>();
         var clipboard    = _services.GetRequiredService<IClipboardService>();
         var fileSave     = _services.GetRequiredService<IFileSaveService>();
+        var screenRecord = _services.GetRequiredService<IScreenRecordService>();
 
         // NullTrayHost: TaskbarIcon 은 MainWindow XAML 이 직접 관리
         var nullTray = new NullTrayHost();
-        var mainVm = new MainViewModel(captureMode, screenCap, windowEnum, clipboard, fileSave, settings, nullTray);
+        var mainVm = new MainViewModel(captureMode, screenCap, windowEnum, clipboard, fileSave, screenRecord, settings, nullTray);
 
         // MainViewModel 받는 생성자로 — TrayIcon.DataContext 동시 할당
         _mainWindow = new MainWindow(mainVm);

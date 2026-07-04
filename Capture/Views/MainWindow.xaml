@@ -28,6 +28,7 @@
                      RelativeSource Self.PlacementTarget 바인딩이 깨지는 케이스가 있음. -->
                 <ContextMenu x:Name="TrayMenu">
                     <MenuItem Header="Capture" Command="{Binding CaptureCommand}"/>
+                    <MenuItem Header="{Binding RecordMenuHeader}" Command="{Binding ToggleRecordingCommand}"/>
                     <Separator/>
                     <MenuItem Header="Load from image file" Command="{Binding LoadFromFileCommand}"/>
                     <Separator/>
