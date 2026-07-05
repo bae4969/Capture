@@ -44,4 +44,6 @@ internal static class NativeConstants
     public const int  GWL_EXSTYLE   = -20;
     public const int  WS_EX_LAYERED = 0x80000;
     public const uint LWA_ALPHA     = 0x2;
+    // 녹화 영역 테두리 오버레이 클릭 통과 — 마우스 이벤트를 밑 창으로 투과시켜 녹화 중 조작 유지.
+    public const int  WS_EX_TRANSPARENT = 0x20;
 }
