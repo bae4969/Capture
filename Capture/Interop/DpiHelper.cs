@@ -85,13 +85,18 @@ public static partial class DpiHelper  // ADR-401: partial 키워드 추가 (Lib
     /// <summary>
     /// 단일 모니터의 물리 픽셀 좌표 및 DPI 스케일 정보.
     /// EnumMonitors() 가 반환하는 요소.
+    /// WorkArea 는 작업표시줄·앱바를 제외한 영역(MONITORINFO.rcWork) — 창을 놓아도 가려지지 않는 범위.
+    /// DeviceName 은 "\\.\DISPLAY1" 형식(MONITORINFOEX.szDevice) — ScreenRecorderLib 의
+    /// RecordableDisplay.DeviceName 과 같은 문자열이라 녹화 소스↔모니터 매칭에 쓴다.
     /// </summary>
     public readonly record struct MonitorInfo(
         System.Drawing.Rectangle PhysicalBounds,
+        System.Drawing.Rectangle WorkArea,
         double ScaleX,
         double ScaleY,
         bool IsPrimary,
-        IntPtr HMonitor);
+        IntPtr HMonitor,
+        string DeviceName);
 
     // ── 공개 API ──────────────────────────────────────────────────────────────
 
@@ -115,13 +120,17 @@ public static partial class DpiHelper  // ADR-401: partial 키워드 추가 (Lib
                 var physBounds = new System.Drawing.Rectangle(
                     rc.Left, rc.Top, rc.Right - rc.Left, rc.Bottom - rc.Top);
 
+                var rw = info.rcWork;
+                var workArea = new System.Drawing.Rectangle(
+                    rw.Left, rw.Top, rw.Right - rw.Left, rw.Bottom - rw.Top);
+
                 var pt = new POINT(rc.Left, rc.Top);
                 int hr = GetDpiForMonitor(hMonitor, MDT_EFFECTIVE_DPI, out uint dpiX, out uint dpiY);
                 double sx = hr == 0 ? dpiX / 96.0 : 1.0;
                 double sy = hr == 0 ? dpiY / 96.0 : 1.0;
                 bool isPrimary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
 
-                list.Add(new MonitorInfo(physBounds, sx, sy, isPrimary, hMonitor));
+                list.Add(new MonitorInfo(physBounds, workArea, sx, sy, isPrimary, hMonitor, info.szDevice ?? string.Empty));
                 return true; // 계속 열거
             },
             IntPtr.Zero);
