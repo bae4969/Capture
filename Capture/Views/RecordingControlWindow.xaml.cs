@@ -59,19 +59,22 @@ public partial class RecordingControlWindow : Window
         int barH = (int)Math.Ceiling(ActualHeight * sy);
         int gap = (int)Math.Round(GapDip * sy);
 
-        // virtual screen 경계 — 모든 모니터 PhysicalBounds 합집합(기존 EnumMonitors 재사용, 신규 API 없음).
+        // 모든 모니터 작업 영역(WorkArea)의 합집합 — 폴백용 경계.
         var monitors = DpiHelper.EnumMonitors();
-        int vLeft = monitors.Min(m => m.PhysicalBounds.Left);
-        int vTop = monitors.Min(m => m.PhysicalBounds.Top);
-        int vRight = monitors.Max(m => m.PhysicalBounds.Right);
-        int vBottom = monitors.Max(m => m.PhysicalBounds.Bottom);
+        int vLeft = monitors.Min(m => m.WorkArea.Left);
+        int vTop = monitors.Min(m => m.WorkArea.Top);
+        int vRight = monitors.Max(m => m.WorkArea.Right);
+        int vBottom = monitors.Max(m => m.WorkArea.Bottom);
 
-        // region 좌상단이 속한 모니터 — 바를 이 모니터 경계 안에 배치·clamp 한다. virtual screen 전체를
+        // region 좌상단이 속한 모니터 — 바를 이 모니터 안에 배치·clamp 한다. virtual screen 전체를
         // 기준으로 하면 세로 오프셋 멀티모니터에서 '위/아래 바깥'이 어떤 모니터에도 없는 빈 공간이 되어
-        // 바가 사라진다(사용자 보고: 모니터 가장자리로 가면 핸들이 없어짐). 못 찾으면 virtual screen 폴백.
+        // 바가 사라진다(사용자 보고: 모니터 가장자리로 가면 핸들이 없어짐). 못 찾으면 합집합 폴백.
+        // 경계는 모니터 전체(PhysicalBounds)가 아니라 작업 영역(WorkArea)을 쓴다 — 전체를 쓰면 영역이
+        // 화면 아래쪽일 때 바가 작업표시줄 자리에 놓여 그 아래로 가려진다(사용자 보고).
+        // 모니터 탐색 자체는 PhysicalBounds 기준 — region 좌상단이 작업표시줄 위일 수도 있어서.
         var mon = monitors.FirstOrDefault(m => m.PhysicalBounds.Contains(_region.Left, _region.Top));
-        var bounds = mon.PhysicalBounds.Width > 0
-            ? mon.PhysicalBounds
+        var bounds = mon.WorkArea.Width > 0
+            ? mon.WorkArea
             : System.Drawing.Rectangle.FromLTRB(vLeft, vTop, vRight, vBottom);
 
         int x = _region.Left;
