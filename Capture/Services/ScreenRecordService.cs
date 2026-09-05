@@ -4,8 +4,13 @@
 // ADR 없음(신규 라이브러리, 사용자 승인 완료). ScreenRecorderLib 6.6.0 실물 API 기준.
 // frame-based: _isRecording bool → _state 상태머신. OnStatusChanged 로 RecorderStatus→RecordingState 매핑.
 //   Pause/Resume/StopAndWait 추가. Stop 시 완료 콜백을 로컬 MRE 로 timeout 대기해 종료 데드락 회피(UI 무관).
+// multi-monitor fix: SourceRect 를 virtual screen 절대좌표 그대로 넣던 것을 '캔버스 좌표'로 변환.
+//   라이브러리는 소스 합집합의 좌상단을 (0,0) 으로 정규화한 캔버스를 만든다 — 주 모니터 왼쪽/위에
+//   모니터가 있으면 가상 원점이 음수라 절대좌표가 그만큼 밀려 다른 모니터가 녹화됐다.
+//   (실측: 3 FHD 에서 2번=주 모니터 영역이 왼쪽 1번 모니터로 크롭됨)
 
 using System.Drawing;
+using Capture.Interop;
 using ScreenRecorderLib;
 
 namespace Capture.Services;
@@ -19,6 +24,10 @@ public class ScreenRecordService : IScreenRecordService
     // StopAndWait 가 이 이벤트를 리셋→Stop→Wait 하고, 완료/실패 콜백이 Set 한다.
     private readonly System.Threading.ManualResetEventSlim _finished = new(false);
 
+    // 캔버스 원점 = Start 시점 모니터 합집합의 좌상단(virtual screen 절대좌표).
+    // 캔버스는 recorder 생성 시점에 고정되므로 녹화 중 재계산하지 않고 이 값을 계속 쓴다.
+    private Point _canvasOrigin = Point.Empty;
+
     public bool IsRecording => _state == RecordingState.Recording || _state == RecordingState.Paused;
     public RecordingState State => _state;
 
@@ -31,12 +40,34 @@ public class ScreenRecordService : IScreenRecordService
         if (_state != RecordingState.Idle) return;
 
         // 모든 디스플레이를 소스로 넣어 output canvas 가 virtual screen 전체를 덮게 한 뒤,
-        // OutputOptions.SourceRect(= output 크롭)로 절대좌표 영역만 잘라낸다.
+        // OutputOptions.SourceRect(= output 크롭)로 그 영역만 잘라낸다.
         // 단일 DisplayRecordingSource + source.SourceRect 는 그 모니터 로컬좌표라
         // cross-monitor 절대 rect 계약과 안 맞아 이 경로를 택함.
+        var monitors = DpiHelper.EnumMonitors();
+        _canvasOrigin = new Point(
+            monitors.Min(m => m.PhysicalBounds.Left),
+            monitors.Min(m => m.PhysicalBounds.Top));
+
+        // 각 소스의 캔버스 내 위치·크기를 명시 고정 — 캔버스 배치를 라이브러리 자동 배치에
+        // 맡기지 않고 "캔버스 = virtual screen 을 원점만큼 평행이동한 것"을 계약으로 만든다.
+        // 이 계약이 있어야 ToCanvasRect 의 좌표 변환이 성립한다.
         var sources = new List<RecordingSourceBase>();
         foreach (var display in Recorder.GetDisplays())
-            sources.Add(new DisplayRecordingSource(display.DeviceName));
+        {
+            var source = new DisplayRecordingSource(display.DeviceName);
+            var mon = monitors.FirstOrDefault(m =>
+                string.Equals(m.DeviceName, display.DeviceName, StringComparison.OrdinalIgnoreCase));
+            // 매칭 실패(장치명 불일치)면 위치를 지정하지 않고 라이브러리 자동 배치에 맡긴다.
+            if (mon.PhysicalBounds.Width > 0)
+            {
+                source.Position = new ScreenPoint(
+                    mon.PhysicalBounds.Left - _canvasOrigin.X,
+                    mon.PhysicalBounds.Top - _canvasOrigin.Y);
+                source.OutputSize = new ScreenSize(
+                    mon.PhysicalBounds.Width, mon.PhysicalBounds.Height);
+            }
+            sources.Add(source);
+        }
 
         var options = new RecorderOptions
         {
@@ -44,7 +75,7 @@ public class ScreenRecordService : IScreenRecordService
             OutputOptions = new OutputOptions
             {
                 RecorderMode = RecorderMode.Video,
-                SourceRect = new ScreenRect(region.X, region.Y, region.Width, region.Height),
+                SourceRect = ToCanvasRect(region),
             },
             // 무음 스코프 — 오디오 캡처를 명시적으로 끈다(기본이 켜져 있음).
             AudioOptions = new AudioOptions { IsAudioEnabled = false },
@@ -99,17 +130,25 @@ public class ScreenRecordService : IScreenRecordService
     {
         // 녹화 중(Recording)에만 유효. GetDynamicOptionsBuilder 로 SourceRect(output 크롭)를 즉시 갱신한다.
         // SetOptions 는 !IsRecording 가드가 있어 녹화 중엔 못 쓰므로 DynamicOptionsBuilder 경로가 유일.
-        // Start 와 동일한 절대좌표 ScreenRect 생성 — 크기는 시작 시 고정 출력 해상도라 위치만 이동해야 왜곡이 없다.
+        // Start 와 동일한 캔버스 좌표 변환 — 크기는 시작 시 고정 출력 해상도라 위치만 이동해야 왜곡이 없다.
         if (_state != RecordingState.Recording || _recorder == null) return false;
 
         return _recorder
             .GetDynamicOptionsBuilder()
             .SetDynamicOutputOptions(new DynamicOutputOptions
             {
-                SourceRect = new ScreenRect(region.X, region.Y, region.Width, region.Height),
+                SourceRect = ToCanvasRect(region),
             })
             .Apply();
     }
+
+    // virtual screen 절대 rect → 캔버스 rect. 캔버스 원점(합집합 좌상단)만큼 평행이동한다.
+    // 원점이 (0,0) 인 배치(주 모니터가 가장 왼쪽·위)에서는 항등 변환이라 기존 동작과 같다.
+    private ScreenRect ToCanvasRect(Rectangle region) => new(
+        region.X - _canvasOrigin.X,
+        region.Y - _canvasOrigin.Y,
+        region.Width,
+        region.Height);
 
     // RecorderStatus(라이브러리) → RecordingState(자체) 매핑. 인코더 백그라운드 스레드에서 올 수 있어
     // 여기서는 UI 를 절대 만지지 않고 상태 전이·이벤트 발화만 한다(구독자가 UI 마샬링 책임).
