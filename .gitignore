@@ -365,3 +365,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# 작업용 임시 폴더 (CLAUDE.md temp/ 규약 — input/output/scripts)
+temp/
