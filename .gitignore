@@ -367,3 +367,9 @@ MigrationBackup/
 FodyWeavers.xsd
 # 작업용 임시 폴더 (CLAUDE.md temp/ 규약 — input/output/scripts)
 temp/
+# 하네스 (01 공용) — git 에 올리지 않음
+CLAUDE.md
+AGENTS.md
+.claude
+.agents/
+.codex/hooks.json
