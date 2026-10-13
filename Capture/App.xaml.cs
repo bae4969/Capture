@@ -62,6 +62,7 @@ public partial class App : Application
         }
 
         LockExtractedFiles();
+        RegisterCrashLogging();
 
         base.OnStartup(e);
 
@@ -149,6 +150,42 @@ public partial class App : Application
         {
             // 열거 중 폴더가 사라지는 등 — 보호를 일부 못 해도 앱 시작은 막지 않는다(잠근 만큼은 유지).
         }
+    }
+
+    // 처리되지 않은 예외를 crash.log 에 남긴다 — 다른 PC 에서 죽어도 원인을 파일로 확인하기 위함.
+    // UI 스레드 예외(async 이벤트 핸들러 포함)는 기록 후 Handled 로 넘겨 트레이 상주를 유지한다.
+    // 그 외 스레드 예외는 런타임이 종료를 막을 수 없어 기록만 한다.
+    private void RegisterCrashLogging()
+    {
+        DispatcherUnhandledException += (_, args) =>
+        {
+            WriteCrashLog("Dispatcher", args.Exception);
+            args.Handled = true;
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            WriteCrashLog("AppDomain", args.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            WriteCrashLog("UnobservedTask", args.Exception);
+            args.SetObserved();
+        };
+    }
+
+    private static void WriteCrashLog(string source, Exception? ex)
+    {
+        try
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BitWiz", "Capture");
+            Directory.CreateDirectory(dir);
+            string path = Path.Combine(dir, "crash.log");
+            // 같은 예외가 반복돼도 무한히 커지지 않게 1MB 를 넘으면 새로 시작.
+            if (File.Exists(path) && new FileInfo(path).Length > 1024 * 1024)
+                File.Delete(path);
+            File.AppendAllText(path,
+                $"==== {DateTime.Now:yyyy-MM-dd HH:mm:ss} [{source}] v{typeof(App).Assembly.GetName().Version}{Environment.NewLine}{ex}{Environment.NewLine}");
+        }
+        catch { /* 로그 실패가 또 다른 예외를 만들지 않도록 */ }
     }
 
     protected override void OnExit(ExitEventArgs e)
