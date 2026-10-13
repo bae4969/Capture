@@ -8,6 +8,7 @@
 // UseWindowsForms=true 로 인해 Application, StartupEventArgs, ExitEventArgs 모두 모호 → 전체 명시
 // 8차: IEmailService DI 등록 제거, MainViewModel ctor 인자 변경 반영 (ADR-006)
 
+using System.IO;
 using System.Windows;
 using Capture.Services;
 using Capture.ViewModels;
@@ -32,6 +33,10 @@ public partial class App : Application
     private const string SingleInstanceMutexName = "Local\\Capture.BitWiz.SingleInstance.7A8F3C2D-9E1B-4F6A-B5D8-1C3E2A0F8B49";
     private static Mutex? _singleInstanceMutex;
 
+    // 단일 EXE 가 %TEMP%\.net\Capture\<id>\ 에 풀어둔 파일의 삭제 금지 핸들 — 프로세스 수명 동안 보유.
+    // static 으로 루트 유지 — GC 되면 종료자가 핸들을 닫아 잠금이 풀린다.
+    private static List<FileStream>? _extractedFileLocks;
+
     // 9차 추가 (ADR-301): View codebehind 에서 ISettingsService 등 서비스 접근
     public IServiceProvider Services
         => _services ?? throw new InvalidOperationException("DI not initialized.");
@@ -55,6 +60,9 @@ public partial class App : Application
             Environment.Exit(0);
             return;
         }
+
+        LockExtractedFiles();
+        RegisterCrashLogging();
 
         base.OnStartup(e);
 
@@ -113,6 +121,71 @@ public partial class App : Application
             if (mainVm.CaptureCommand.CanExecute(null))
                 await mainVm.CaptureCommand.ExecuteAsync(null);
         };
+    }
+
+    // 포터블 단일 EXE(IncludeAllContentForSelfExtract — C++/CLI 인 ScreenRecorderLib 때문에 필요)는 실행 시
+    // 모든 DLL 을 %TEMP%\.net\Capture\<id>\ 에 풀고 필요할 때 불러온다. 아직 안 불러온 DLL 은 잠겨 있지 않아
+    // 임시파일 정리(저장소 센스 등)가 지울 수 있고, 그러면 첫 사용 시 FileNotFoundException 으로 죽는다
+    // (예: 앱을 켜고 오래 지난 뒤 첫 캡쳐 — Graphics.Dispose 가 System.Numerics.Vectors 를 처음 불러옴).
+    // 풀린 파일을 전부 삭제 금지(FileShare.Read)로 열어 둬 실행 중에는 지워지지 않게 한다.
+    // 꺼져 있는 동안 지워진 파일은 다음 실행 때 호스트가 다시 풀어 준다.
+    private static void LockExtractedFiles()
+    {
+        // 풀린 폴더에서 실행 중일 때만 — 일반 빌드(exe 와 같은 폴더)는 건너뛴다.
+        string baseDir = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
+        string? exeDir = Path.GetDirectoryName(Environment.ProcessPath);
+        if (exeDir == null || string.Equals(baseDir, exeDir, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _extractedFileLocks = new List<FileStream>();
+        try
+        {
+            foreach (string file in Directory.EnumerateFiles(baseDir, "*", SearchOption.AllDirectories))
+            {
+                try { _extractedFileLocks.Add(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read)); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* 못 잠근 파일은 건너뜀 */ }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 열거 중 폴더가 사라지는 등 — 보호를 일부 못 해도 앱 시작은 막지 않는다(잠근 만큼은 유지).
+        }
+    }
+
+    // 처리되지 않은 예외를 crash.log 에 남긴다 — 다른 PC 에서 죽어도 원인을 파일로 확인하기 위함.
+    // UI 스레드 예외(async 이벤트 핸들러 포함)는 기록 후 Handled 로 넘겨 트레이 상주를 유지한다.
+    // 그 외 스레드 예외는 런타임이 종료를 막을 수 없어 기록만 한다.
+    private void RegisterCrashLogging()
+    {
+        DispatcherUnhandledException += (_, args) =>
+        {
+            WriteCrashLog("Dispatcher", args.Exception);
+            args.Handled = true;
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            WriteCrashLog("AppDomain", args.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            WriteCrashLog("UnobservedTask", args.Exception);
+            args.SetObserved();
+        };
+    }
+
+    private static void WriteCrashLog(string source, Exception? ex)
+    {
+        try
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BitWiz", "Capture");
+            Directory.CreateDirectory(dir);
+            string path = Path.Combine(dir, "crash.log");
+            // 같은 예외가 반복돼도 무한히 커지지 않게 1MB 를 넘으면 새로 시작.
+            if (File.Exists(path) && new FileInfo(path).Length > 1024 * 1024)
+                File.Delete(path);
+            File.AppendAllText(path,
+                $"==== {DateTime.Now:yyyy-MM-dd HH:mm:ss} [{source}] v{typeof(App).Assembly.GetName().Version}{Environment.NewLine}{ex}{Environment.NewLine}");
+        }
+        catch { /* 로그 실패가 또 다른 예외를 만들지 않도록 */ }
     }
 
     protected override void OnExit(ExitEventArgs e)
