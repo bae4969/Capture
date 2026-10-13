@@ -565,17 +565,34 @@ public partial class MainViewModel : ObservableObject
         lock (_requestCaptureWindows)
         {
             if (_requestCaptureWindows.Count > 0) return;
+        }
+
+        // 4차 mixed-DPI fix: Screen.AllScreens 제거 → DpiHelper.EnumMonitors 사용
+        // EnumDisplayMonitors + GetMonitorInfo + GetDpiForMonitor 로 물리 픽셀 좌표·DPI 직접 획득
+        // 오버레이 창을 만들기 전에 모든 모니터를 먼저 캡쳐 — 실패 시 창이 일부만 뜬 채 남지 않도록.
+        var monitors = DpiHelper.EnumMonitors();
+        var screenBitmaps = await CaptureMonitorsAsync(monitors);
+        if (screenBitmaps == null)
+        {
+            // 화면 접근 불가로 이번 요청은 건너뜀 — 녹화 요청 플래그도 꺼야 다음 캡쳐가 녹화로 오인되지 않는다.
+            _recordingRequested = false;
+            return;
+        }
+
+        lock (_requestCaptureWindows)
+        {
+            // 재시도 대기 사이에 다른 요청이 오버레이를 띄웠으면 이번 캡쳐는 버린다.
+            if (_requestCaptureWindows.Count > 0)
+            {
+                foreach (var b in screenBitmaps) b.Dispose();
+                return;
+            }
             ReleaseRequestCaptureWindows();
 
-            // 4차 mixed-DPI fix: Screen.AllScreens 제거 → DpiHelper.EnumMonitors 사용
-            // EnumDisplayMonitors + GetMonitorInfo + GetDpiForMonitor 로 물리 픽셀 좌표·DPI 직접 획득
-            var monitors = DpiHelper.EnumMonitors();
             for (int i = 0; i < monitors.Count; i++)
             {
                 var mon = monitors[i];
-
-                // CaptureRegion 에 물리 픽셀 좌표 직접 전달 — CaptureMonitor(Screen) 의존 제거
-                var bmp = _screenCapture.CaptureRegion(mon.PhysicalBounds);
+                var bmp = screenBitmaps[i];
 
                 var vm = new RequestCaptureViewModel(_captureMode, _windowEnum)
                 {
@@ -611,6 +628,30 @@ public partial class MainViewModel : ObservableObject
                 win.Show();
                 _requestCaptureWindows.Add(win);
             }
+        }
+    }
+
+    // 잠금 중·잠금 해제 직후처럼 입력 데스크톱이 바뀐 동안엔 화면 복사가 Win32Exception(핸들 무효)으로 실패한다.
+    // 잠깐 기다렸다 다시 시도하고, 끝내 실패하면 null — 호출자는 이번 캡쳐만 건너뛴다.
+    private async Task<List<System.Drawing.Bitmap>?> CaptureMonitorsAsync(IReadOnlyList<DpiHelper.MonitorInfo> monitors)
+    {
+        const int MaxAttempts = 5;
+        for (int attempt = 1; ; attempt++)
+        {
+            var bitmaps = new List<System.Drawing.Bitmap>();
+            try
+            {
+                // CaptureRegion 에 물리 픽셀 좌표 직접 전달 — CaptureMonitor(Screen) 의존 제거
+                foreach (var mon in monitors)
+                    bitmaps.Add(_screenCapture.CaptureRegion(mon.PhysicalBounds));
+                return bitmaps;
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                foreach (var b in bitmaps) b.Dispose();
+                if (attempt == MaxAttempts) return null;
+            }
+            await Task.Delay(200);
         }
     }
 
@@ -654,7 +695,9 @@ public partial class MainViewModel : ObservableObject
             && _captureMode.CurrentMode == CaptureMode.Region;
         if (isAbsolute)
         {
-            bmpCropped = _screenCapture.CaptureRegion(rectCropped);
+            // 드래그 직후 화면 접근이 막혀 있으면(잠금 전환 등) 이번 캡쳐만 건너뛴다 — bmpCropped=null 로 아래 표시 생략.
+            try { bmpCropped = _screenCapture.CaptureRegion(rectCropped); }
+            catch (System.ComponentModel.Win32Exception) { }
         }
 
         if (_captureMode.CurrentMode == CaptureMode.ColorPick)
